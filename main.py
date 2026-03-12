@@ -37,9 +37,10 @@ def create_expense(token: str, inv: dict):
         "amount": inv.get("total_amount") or 0,
         "vat": inv.get("vat_amount") or 0,
         "vendor": inv.get("vendor") or "",
-        "invoiceNumber": inv.get("invoice_number") or "",
         "currency": inv.get("currency") or "ILS",
     }
+    if inv.get("invoice_number"):
+        payload["number"] = inv["invoice_number"]
     r = requests.post(f"{GREEN_INVOICE_BASE}/expenses", json=payload, headers=headers, timeout=10)
     r.raise_for_status()
     return r.json()
