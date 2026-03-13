@@ -172,6 +172,28 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """מציג את רשימת הסיווגים הזמינים בחשבון"""
+    try:
+        token = get_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        r = requests.get(
+            f"{GREEN_INVOICE_BASE}/accounting/classifications/map",
+            headers=headers, timeout=10
+        )
+        if r.ok:
+            items = r.json()
+            if items:
+                lines = [f"{i['code']} - {i['name']} (id: {i['id'][:8]}...)" for i in items[:20]]
+                await update.message.reply_text("סיווגים זמינים:\n" + "\n".join(lines))
+            else:
+                await update.message.reply_text("הרשימה ריקה! אין סיווגים מוגדרים בחשבון.")
+        else:
+            await update.message.reply_text(f"שגיאה בשליפת סיווגים:\n{r.status_code}\n{r.text}")
+    except Exception as e:
+        await update.message.reply_text(f"שגיאה: {e}")
+
+
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
 
@@ -379,6 +401,7 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("debug", cmd_debug))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_file))
     app.add_handler(CallbackQueryHandler(handle_type, pattern=r"^type_"))
     app.add_handler(CallbackQueryHandler(handle_category_confirm, pattern=r"^cat_confirm_"))
