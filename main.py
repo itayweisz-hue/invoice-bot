@@ -85,6 +85,7 @@ def create_expense(token: str, inv: dict):
         "documentType": 20,
         "supplier": {"name": inv.get("vendor") or ""},
         "accountingClassification": accounting,
+        "paymentType": inv.get("payment_type") or 3,
     }
     if inv.get("invoice_number"):
         payload["number"] = inv["invoice_number"]
@@ -279,6 +280,18 @@ CAT_CLASSIFICATION_NAME = {
     "📋 אחר":            "עלויות אחרות",
 }
 
+# אמצעי תשלום — ערכים לפי API של חשבונית ירוקה
+PAYMENT_METHODS = [
+    ("💳 כרטיס אשראי",      "pay_3",  3),
+    ("💵 מזומן",             "pay_1",  1),
+    ("📝 המחאה",             "pay_2",  2),
+    ("🏦 העברה בנקאית",     "pay_4",  4),
+    ("📱 ביט / אפליקציה",   "pay_5",  5),
+    ("📋 אחר",               "pay_10", 10),
+]
+PAY_CB_TO_CODE  = {cb: code  for _, cb, code  in PAYMENT_METHODS}
+PAY_CB_TO_LABEL = {cb: label for label, cb, _ in PAYMENT_METHODS}
+
 # מיפוי מהערך שClaude מחזיר לתווית
 CLAUDE_CAT_MAP = {
     "דלק ונסיעות":      "🚗 דלק ונסיעות",
@@ -317,6 +330,7 @@ async def handle_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await show_category_list(query)
     else:
+        # הכנסה — דלג על קטגוריה ותשלום
         await show_confirmation(query, context)
 
 
@@ -338,7 +352,7 @@ async def handle_category_confirm(update: Update, context: ContextTypes.DEFAULT_
 
     if query.data == "cat_confirm_yes":
         context.user_data["category"] = context.user_data.get("suggested_category", "")
-        await show_confirmation(query, context)
+        await show_payment_method(query, context)
     else:
         await show_category_list(query)
 
@@ -348,6 +362,47 @@ async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     context.user_data["category"] = CAT_LABELS[query.data]
+    await show_payment_method(query, context)
+
+
+async def show_payment_method(query, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ כן", callback_data="pay_confirm_yes"),
+        InlineKeyboardButton("❌ לא, בחר אחר", callback_data="pay_confirm_no"),
+    ]])
+    await query.edit_message_text(
+        "אמצעי תשלום: 💳 כרטיס אשראי\nנכון?",
+        reply_markup=keyboard,
+    )
+
+
+async def handle_payment_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "pay_confirm_yes":
+        context.user_data["payment_type"] = 3  # כרטיס אשראי
+        context.user_data["payment_label"] = "💳 כרטיס אשראי"
+        await show_confirmation(query, context)
+    else:
+        # הצג רשימה מלאה
+        rows = []
+        for i in range(0, len(PAYMENT_METHODS), 2):
+            row = [InlineKeyboardButton(label, callback_data=cb)
+                   for label, cb, _ in PAYMENT_METHODS[i:i+2]]
+            rows.append(row)
+        await query.edit_message_text(
+            "בחר אמצעי תשלום:",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+
+
+async def handle_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data["payment_type"] = PAY_CB_TO_CODE[query.data]
+    context.user_data["payment_label"] = PAY_CB_TO_LABEL[query.data]
     await show_confirmation(query, context)
 
 
@@ -365,11 +420,14 @@ async def show_confirmation(query, context: ContextTypes.DEFAULT_TYPE):
     ])
 
     cat_line = f"🗂️ קטגוריה: {category}\n" if category else ""
+    payment_label = context.user_data.get("payment_label", "")
+    pay_line = f"💳 תשלום: {payment_label}\n" if payment_label else ""
 
     await query.edit_message_text(
         f"סיכום לאישור:\n\n"
         f"📋 סוג: {label}\n"
         f"{cat_line}"
+        f"{pay_line}"
         f"🏪 ספק: {inv.get('vendor') or 'לא זוהה'}\n"
         f"📅 תאריך: {inv.get('date') or 'לא זוהה'}\n"
         f"📝 תיאור: {inv.get('description') or 'לא זוהה'}\n"
@@ -390,6 +448,7 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     inv = context.user_data.get("invoice", {})
     inv_type = context.user_data.get("type", "expense")
     category = context.user_data.get("category", "")
+    payment_type = context.user_data.get("payment_type", 3)
 
     await query.edit_message_text("⏳ מזין לחשבונית ירוקה...")
 
@@ -398,6 +457,7 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if category:
             inv = {**inv,
                    "category": category,
+                   "payment_type": payment_type,
                    "description": f"{category} | {inv.get('description') or inv.get('vendor') or ''}"}
         result = create_expense(token, inv) if inv_type == "expense" else create_income(token, inv)
         doc_id = result.get("id") or result.get("documentId") or "—"
@@ -419,6 +479,8 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_type, pattern=r"^type_"))
     app.add_handler(CallbackQueryHandler(handle_category_confirm, pattern=r"^cat_confirm_"))
     app.add_handler(CallbackQueryHandler(handle_category, pattern=r"^cat_"))
+    app.add_handler(CallbackQueryHandler(handle_payment_confirm, pattern=r"^pay_confirm_"))
+    app.add_handler(CallbackQueryHandler(handle_payment, pattern=r"^pay_\d+$"))
     app.add_handler(CallbackQueryHandler(handle_confirm, pattern=r"^(confirm|cancel)$"))
 
     webhook_url = os.environ.get("WEBHOOK_URL", "")
