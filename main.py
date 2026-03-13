@@ -32,14 +32,23 @@ def get_token():
 def create_expense(token: str, inv: dict):
     headers = {"Authorization": f"Bearer {token}"}
 
-    # חודש דיווח - נגזר מתאריך החשבונית (פורמט YYYYMM)
+    # חודש דיווח - נגזר מתאריך החשבונית
     date_str = inv.get("date") or ""
-    if date_str and len(date_str) >= 7:
-        reporting_month = int(date_str[:4] + date_str[5:7])
-    else:
-        from datetime import date
-        today = date.today()
-        reporting_month = int(f"{today.year}{today.month:02d}")
+    from datetime import date as date_cls
+    import re
+    parsed_date = None
+    if date_str:
+        m = re.match(r'(\d{4})-(\d{1,2})-(\d{1,2})', date_str)
+        if m:
+            parsed_date = date_cls(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        else:
+            m = re.match(r'(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{4})', date_str)
+            if m:
+                parsed_date = date_cls(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    if not parsed_date:
+        parsed_date = date_cls.today()
+    date_str = parsed_date.strftime("%Y-%m-%d")
+    reporting_date = parsed_date.strftime("%Y-%m")  # פורמט "2026-03"
 
     payload = {
         "description": inv.get("description") or inv.get("vendor") or "הוצאה",
@@ -48,7 +57,7 @@ def create_expense(token: str, inv: dict):
         "vat": inv.get("vat_amount") or 0,
         "vendor": inv.get("vendor") or "",
         "currency": inv.get("currency") or "ILS",
-        "reportingMonth": reporting_month,
+        "reportingDate": reporting_date,
     }
     if inv.get("invoice_number"):
         payload["number"] = inv["invoice_number"]
