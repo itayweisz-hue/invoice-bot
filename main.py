@@ -29,6 +29,22 @@ def get_token():
     return r.json()["token"]
 
 
+_classifications_cache: dict = {}  # irsCode → id
+
+def get_classification_id(token: str, irs_code: int) -> str | None:
+    global _classifications_cache
+    if not _classifications_cache:
+        headers = {"Authorization": f"Bearer {token}"}
+        r = requests.get(
+            f"{GREEN_INVOICE_BASE}/accounting/classifications/map",
+            headers=headers, timeout=10
+        )
+        if r.ok:
+            for item in r.json():
+                _classifications_cache[item["code"]] = item["id"]
+    return _classifications_cache.get(irs_code)
+
+
 def create_expense(token: str, inv: dict):
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -52,6 +68,11 @@ def create_expense(token: str, inv: dict):
 
     category = inv.get("category") or "📋 אחר"
     irs_code = CAT_IRS_CODE.get(category, 3545)
+    classification_id = get_classification_id(token, irs_code)
+
+    accounting = {"irsCode": irs_code}
+    if classification_id:
+        accounting["id"] = classification_id
 
     payload = {
         "description": inv.get("description") or inv.get("vendor") or "הוצאה",
@@ -62,7 +83,7 @@ def create_expense(token: str, inv: dict):
         "reportingDate": reporting_date,
         "documentType": 20,
         "supplier": {"name": inv.get("vendor") or ""},
-        "accountingClassification": {"irsCode": irs_code},
+        "accountingClassification": accounting,
     }
     if inv.get("invoice_number"):
         payload["number"] = inv["invoice_number"]
