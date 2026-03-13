@@ -31,13 +31,24 @@ def get_token():
 
 def create_expense(token: str, inv: dict):
     headers = {"Authorization": f"Bearer {token}"}
+
+    # חודש דיווח - נגזר מתאריך החשבונית (פורמט YYYYMM)
+    date_str = inv.get("date") or ""
+    if date_str and len(date_str) >= 7:
+        reporting_month = int(date_str[:4] + date_str[5:7])
+    else:
+        from datetime import date
+        today = date.today()
+        reporting_month = int(f"{today.year}{today.month:02d}")
+
     payload = {
         "description": inv.get("description") or inv.get("vendor") or "הוצאה",
-        "date": inv.get("date") or "",
+        "date": date_str,
         "amount": inv.get("total_amount") or 0,
         "vat": inv.get("vat_amount") or 0,
         "vendor": inv.get("vendor") or "",
         "currency": inv.get("currency") or "ILS",
+        "reportingMonth": reporting_month,
     }
     if inv.get("invoice_number"):
         payload["number"] = inv["invoice_number"]
