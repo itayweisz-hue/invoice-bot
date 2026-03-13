@@ -50,6 +50,9 @@ def create_expense(token: str, inv: dict):
     date_str = parsed_date.strftime("%Y-%m-%d")
     reporting_date = parsed_date.strftime("%Y-%m-01")  # יום ראשון בחודש
 
+    category = inv.get("category") or "📋 אחר"
+    irs_code = CAT_IRS_CODE.get(category, 3545)
+
     payload = {
         "description": inv.get("description") or inv.get("vendor") or "הוצאה",
         "date": date_str,
@@ -59,6 +62,7 @@ def create_expense(token: str, inv: dict):
         "reportingDate": reporting_date,
         "documentType": 20,
         "supplier": {"name": inv.get("vendor") or ""},
+        "accountingClassification": {"irsCode": irs_code},
     }
     if inv.get("invoice_number"):
         payload["number"] = inv["invoice_number"]
@@ -207,6 +211,18 @@ EXPENSE_CATEGORIES = [
 
 CAT_LABELS = {cb: label for label, cb in EXPENSE_CATEGORIES}
 
+# מיפוי קטגוריה → קוד מס (irsCode) לחשבונית ירוקה
+CAT_IRS_CODE = {
+    "🚗 דלק ונסיעות":    3060,
+    "💻 ציוד ומחשבים":   3120,
+    "📱 טלפון ותקשורת":  3515,
+    "📢 שיווק ופרסום":   3090,
+    "🏢 שכירות":         3100,
+    "🍽️ אוכל וארוחות":  3085,
+    "📚 השכלה והדרכה":   3055,
+    "📋 אחר":            3545,
+}
+
 # מיפוי מהערך שClaude מחזיר לתווית
 CLAUDE_CAT_MAP = {
     "דלק ונסיעות":      "🚗 דלק ונסיעות",
@@ -324,7 +340,9 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         token = get_token()
         if category:
-            inv = {**inv, "description": f"{category} | {inv.get('description') or inv.get('vendor') or ''}"}
+            inv = {**inv,
+                   "category": category,
+                   "description": f"{category} | {inv.get('description') or inv.get('vendor') or ''}"}
         result = create_expense(token, inv) if inv_type == "expense" else create_income(token, inv)
         doc_id = result.get("id") or result.get("documentId") or "—"
         await query.edit_message_text(f"✅ הוזן בהצלחה!\n\nמזהה מסמך: {doc_id}")
