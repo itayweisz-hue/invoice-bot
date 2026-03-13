@@ -48,16 +48,17 @@ def create_expense(token: str, inv: dict):
     if not parsed_date:
         parsed_date = date_cls.today()
     date_str = parsed_date.strftime("%Y-%m-%d")
-    reporting_date = parsed_date.strftime("%Y-%m")  # פורמט "2026-03"
+    reporting_date = parsed_date.strftime("%Y-%m-01")  # יום ראשון בחודש
 
     payload = {
         "description": inv.get("description") or inv.get("vendor") or "הוצאה",
         "date": date_str,
         "amount": inv.get("total_amount") or 0,
         "vat": inv.get("vat_amount") or 0,
-        "vendor": inv.get("vendor") or "",
         "currency": inv.get("currency") or "ILS",
         "reportingDate": reporting_date,
+        "documentType": 20,
+        "supplier": {"name": inv.get("vendor") or ""},
     }
     if inv.get("invoice_number"):
         payload["number"] = inv["invoice_number"]
@@ -70,18 +71,19 @@ def create_income(token: str, inv: dict):
     headers = {"Authorization": f"Bearer {token}"}
     price = inv.get("amount_before_vat") or inv.get("total_amount") or 0
     payload = {
-        "type": 320,          # חשבונית מס קבלה
+        "type": 305,          # חשבונית מס קבלה
+        "lang": "he",
         "date": inv.get("date") or "",
         "description": inv.get("description") or "",
         "currency": inv.get("currency") or "ILS",
-        "vatType": 1,
+        "vatType": 0,         # מע"מ רגיל
         "income": [
             {
                 "description": inv.get("description") or inv.get("vendor") or "הכנסה",
                 "quantity": 1,
                 "price": price,
                 "currency": inv.get("currency") or "ILS",
-                "vatType": 1,
+                "vatType": 0,
             }
         ],
     }
