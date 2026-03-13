@@ -108,7 +108,8 @@ def extract_invoice(file_bytes: bytes, mime_type: str) -> dict:
         '  "amount_before_vat": <מספר או null>,\n'
         '  "vat_amount": <מספר או null>,\n'
         '  "total_amount": <מספר>,\n'
-        '  "currency": "ILS"\n'
+        '  "currency": "ILS",\n'
+        '  "suggested_category": "אחת מהאפשרויות: דלק ונסיעות / ציוד ומחשבים / טלפון ותקשורת / שיווק ופרסום / שכירות / אוכל וארוחות / השכלה והדרכה / אחר"\n'
         '}'
     )
 
@@ -195,28 +196,68 @@ EXPENSE_CATEGORIES = [
 
 CAT_LABELS = {cb: label for label, cb in EXPENSE_CATEGORIES}
 
+# מיפוי מהערך שClaude מחזיר לתווית
+CLAUDE_CAT_MAP = {
+    "דלק ונסיעות":      "🚗 דלק ונסיעות",
+    "ציוד ומחשבים":     "💻 ציוד ומחשבים",
+    "טלפון ותקשורת":    "📱 טלפון ותקשורת",
+    "שיווק ופרסום":     "📢 שיווק ופרסום",
+    "שכירות":           "🏢 שכירות",
+    "אוכל וארוחות":     "🍽️ אוכל וארוחות",
+    "השכלה והדרכה":     "📚 השכלה והדרכה",
+    "אחר":              "📋 אחר",
+}
+
 
 async def handle_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    inv_type = query.data.replace("type_", "")  # "expense" / "income"
+    inv_type = query.data.replace("type_", "")
     context.user_data["type"] = inv_type
 
     if inv_type == "expense":
-        # שאל על קטגוריה
-        rows = []
-        for i in range(0, len(EXPENSE_CATEGORIES), 2):
-            row = [InlineKeyboardButton(label, callback_data=cb)
-                   for label, cb in EXPENSE_CATEGORIES[i:i+2]]
-            rows.append(row)
-        await query.edit_message_text(
-            "באיזה קטגוריה לרשום את ההוצאה?",
-            reply_markup=InlineKeyboardMarkup(rows),
-        )
+        inv = context.user_data.get("invoice", {})
+        suggested = CLAUDE_CAT_MAP.get(inv.get("suggested_category", ""), "")
+
+        if suggested:
+            # Claude הציע קטגוריה - שאל אם נכון
+            context.user_data["suggested_category"] = suggested
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ כן", callback_data="cat_confirm_yes"),
+                InlineKeyboardButton("❌ לא, בחר אחרת", callback_data="cat_confirm_no"),
+            ]])
+            await query.edit_message_text(
+                f"זיהיתי קטגוריה: {suggested}\nנכון?",
+                reply_markup=keyboard,
+            )
+        else:
+            await show_category_list(query)
     else:
-        # הכנסה - עבור ישירות לאישור
         await show_confirmation(query, context)
+
+
+async def show_category_list(query):
+    rows = []
+    for i in range(0, len(EXPENSE_CATEGORIES), 2):
+        row = [InlineKeyboardButton(label, callback_data=cb)
+               for label, cb in EXPENSE_CATEGORIES[i:i+2]]
+        rows.append(row)
+    await query.edit_message_text(
+        "באיזה קטגוריה לרשום את ההוצאה?",
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
+async def handle_category_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "cat_confirm_yes":
+        context.user_data["category"] = context.user_data.get("suggested_category", "")
+        await show_confirmation(query, context)
+    else:
+        await show_category_list(query)
 
 
 async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -290,6 +331,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_file))
     app.add_handler(CallbackQueryHandler(handle_type, pattern=r"^type_"))
+    app.add_handler(CallbackQueryHandler(handle_category_confirm, pattern=r"^cat_confirm_"))
     app.add_handler(CallbackQueryHandler(handle_category, pattern=r"^cat_"))
     app.add_handler(CallbackQueryHandler(handle_confirm, pattern=r"^(confirm|cancel)$"))
 
