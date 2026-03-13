@@ -182,13 +182,55 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+EXPENSE_CATEGORIES = [
+    ("🚗 דלק ונסיעות",     "cat_fuel"),
+    ("💻 ציוד ומחשבים",    "cat_equipment"),
+    ("📱 טלפון ותקשורת",   "cat_phone"),
+    ("📢 שיווק ופרסום",    "cat_marketing"),
+    ("🏢 שכירות",          "cat_rent"),
+    ("🍽️ אוכל וארוחות",   "cat_food"),
+    ("📚 השכלה והדרכה",    "cat_education"),
+    ("📋 אחר",             "cat_other"),
+]
+
+CAT_LABELS = {cb: label for label, cb in EXPENSE_CATEGORIES}
+
+
 async def handle_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     inv_type = query.data.replace("type_", "")  # "expense" / "income"
     context.user_data["type"] = inv_type
+
+    if inv_type == "expense":
+        # שאל על קטגוריה
+        rows = []
+        for i in range(0, len(EXPENSE_CATEGORIES), 2):
+            row = [InlineKeyboardButton(label, callback_data=cb)
+                   for label, cb in EXPENSE_CATEGORIES[i:i+2]]
+            rows.append(row)
+        await query.edit_message_text(
+            "באיזה קטגוריה לרשום את ההוצאה?",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+    else:
+        # הכנסה - עבור ישירות לאישור
+        await show_confirmation(query, context)
+
+
+async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data["category"] = CAT_LABELS[query.data]
+    await show_confirmation(query, context)
+
+
+async def show_confirmation(query, context: ContextTypes.DEFAULT_TYPE):
     inv = context.user_data.get("invoice", {})
+    inv_type = context.user_data.get("type", "expense")
+    category = context.user_data.get("category", "")
     label = "הוצאה 💸" if inv_type == "expense" else "הכנסה 💰"
 
     keyboard = InlineKeyboardMarkup([
@@ -198,9 +240,12 @@ async def handle_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ])
 
+    cat_line = f"🗂️ קטגוריה: {category}\n" if category else ""
+
     await query.edit_message_text(
         f"סיכום לאישור:\n\n"
         f"📋 סוג: {label}\n"
+        f"{cat_line}"
         f"🏪 ספק: {inv.get('vendor') or 'לא זוהה'}\n"
         f"📅 תאריך: {inv.get('date') or 'לא זוהה'}\n"
         f"📝 תיאור: {inv.get('description') or 'לא זוהה'}\n"
@@ -220,11 +265,14 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     inv = context.user_data.get("invoice", {})
     inv_type = context.user_data.get("type", "expense")
+    category = context.user_data.get("category", "")
 
     await query.edit_message_text("⏳ מזין לחשבונית ירוקה...")
 
     try:
         token = get_token()
+        if category:
+            inv = {**inv, "description": f"{category} | {inv.get('description') or inv.get('vendor') or ''}"}
         result = create_expense(token, inv) if inv_type == "expense" else create_income(token, inv)
         doc_id = result.get("id") or result.get("documentId") or "—"
         await query.edit_message_text(f"✅ הוזן בהצלחה!\n\nמזהה מסמך: {doc_id}")
@@ -242,6 +290,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_file))
     app.add_handler(CallbackQueryHandler(handle_type, pattern=r"^type_"))
+    app.add_handler(CallbackQueryHandler(handle_category, pattern=r"^cat_"))
     app.add_handler(CallbackQueryHandler(handle_confirm, pattern=r"^(confirm|cancel)$"))
 
     webhook_url = os.environ.get("WEBHOOK_URL", "")
