@@ -29,9 +29,9 @@ def get_token():
     return r.json()["token"]
 
 
-_classifications_cache: dict = {}  # irsCode → id
+_classifications_cache: dict = {}  # name → id
 
-def get_classification_id(token: str, irs_code: int) -> str | None:
+def get_classification_id_by_name(token: str, name: str) -> str | None:
     global _classifications_cache
     if not _classifications_cache:
         headers = {"Authorization": f"Bearer {token}"}
@@ -41,8 +41,8 @@ def get_classification_id(token: str, irs_code: int) -> str | None:
         )
         if r.ok:
             for item in r.json():
-                _classifications_cache[item["code"]] = item["id"]
-    return _classifications_cache.get(irs_code)
+                _classifications_cache[item["name"]] = item["id"]
+    return _classifications_cache.get(name)
 
 
 def create_expense(token: str, inv: dict):
@@ -67,8 +67,9 @@ def create_expense(token: str, inv: dict):
     reporting_date = parsed_date.strftime("%Y-%m-01")  # יום ראשון בחודש
 
     category = inv.get("category") or "📋 אחר"
-    irs_code = CAT_IRS_CODE.get(category, 3545)
-    classification_id = get_classification_id(token, irs_code)
+    irs_code = CAT_IRS_CODE.get(category, 1390)
+    classification_name = CAT_CLASSIFICATION_NAME.get(category, "עלויות אחרות")
+    classification_id = get_classification_id_by_name(token, classification_name)
 
     accounting = {"irsCode": irs_code}
     if classification_id:
@@ -254,16 +255,28 @@ EXPENSE_CATEGORIES = [
 
 CAT_LABELS = {cb: label for label, cb in EXPENSE_CATEGORIES}
 
-# מיפוי קטגוריה → קוד מס (irsCode) לחשבונית ירוקה
+# מיפוי קטגוריה → קוד מס (irsCode) לחשבונית ירוקה — לפי הסיווגים בחשבון
 CAT_IRS_CODE = {
-    "🚗 דלק ונסיעות":    3060,
-    "💻 ציוד ומחשבים":   3120,
-    "📱 טלפון ותקשורת":  3515,
-    "📢 שיווק ופרסום":   3090,
-    "🏢 שכירות":         3100,
-    "🍽️ אוכל וארוחות":  3085,
-    "📚 השכלה והדרכה":   3055,
-    "📋 אחר":            3545,
+    "🚗 דלק ונסיעות":    3567,
+    "💻 ציוד ומחשבים":   3680,
+    "📱 טלפון ותקשורת":  3500,
+    "📢 שיווק ופרסום":   3500,
+    "🏢 שכירות":         3500,
+    "🍽️ אוכל וארוחות":  1390,
+    "📚 השכלה והדרכה":   1390,
+    "📋 אחר":            1390,
+}
+
+# מיפוי קטגוריה → שם הסיווג המדויק בחשבונית ירוקה (חיפוש לפי שם כי יש כפילויות בקוד)
+CAT_CLASSIFICATION_NAME = {
+    "🚗 דלק ונסיעות":    "דלק רכב 4769834",
+    "💻 ציוד ומחשבים":   "תוכנה",
+    "📱 טלפון ותקשורת":  "הוצאות הנהלה וכלליות",
+    "📢 שיווק ופרסום":   "הוצאות הנהלה וכלליות",
+    "🏢 שכירות":         "הוצאות הנהלה וכלליות",
+    "🍽️ אוכל וארוחות":  "עלויות אחרות",
+    "📚 השכלה והדרכה":   "עלויות אחרות",
+    "📋 אחר":            "עלויות אחרות",
 }
 
 # מיפוי מהערך שClaude מחזיר לתווית
