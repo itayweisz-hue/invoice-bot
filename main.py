@@ -1,8 +1,12 @@
 import os
+import re
+import sys
 import json
 import base64
+import traceback
 import requests
 import anthropic
+from datetime import date as date_cls
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -50,8 +54,6 @@ def create_expense(token: str, inv: dict):
 
     # חודש דיווח - נגזר מתאריך החשבונית
     date_str = inv.get("date") or ""
-    from datetime import date as date_cls
-    import re
     parsed_date = None
     if date_str:
         m = re.match(r'(\d{4})-(\d{1,2})-(\d{1,2})', date_str)
@@ -193,6 +195,7 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(f"שגיאה בשליפת סיווגים:\n{r.status_code}\n{r.text}")
     except Exception as e:
+        traceback.print_exc(file=sys.stderr)
         await update.message.reply_text(f"שגיאה: {e}")
 
 
@@ -216,6 +219,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         inv = extract_invoice(file_bytes, mime_type)
         context.user_data["invoice"] = inv
     except Exception as e:
+        traceback.print_exc(file=sys.stderr)
         await msg.reply_text(f"❌ לא הצלחתי לקרוא את החשבונית.\nשגיאה: {e}")
         return
 
@@ -309,29 +313,33 @@ async def handle_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    inv_type = query.data.replace("type_", "")
-    context.user_data["type"] = inv_type
+    try:
+        inv_type = query.data.replace("type_", "")
+        context.user_data["type"] = inv_type
 
-    if inv_type == "expense":
-        inv = context.user_data.get("invoice", {})
-        suggested = CLAUDE_CAT_MAP.get(inv.get("suggested_category", ""), "")
+        if inv_type == "expense":
+            inv = context.user_data.get("invoice", {})
+            suggested = CLAUDE_CAT_MAP.get(inv.get("suggested_category", ""), "")
 
-        if suggested:
-            # Claude הציע קטגוריה - שאל אם נכון
-            context.user_data["suggested_category"] = suggested
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ כן", callback_data="cat_confirm_yes"),
-                InlineKeyboardButton("❌ לא, בחר אחרת", callback_data="cat_confirm_no"),
-            ]])
-            await query.edit_message_text(
-                f"זיהיתי קטגוריה: {suggested}\nנכון?",
-                reply_markup=keyboard,
-            )
+            if suggested:
+                # Claude הציע קטגוריה - שאל אם נכון
+                context.user_data["suggested_category"] = suggested
+                keyboard = InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ כן", callback_data="cat_confirm_yes"),
+                    InlineKeyboardButton("❌ לא, בחר אחרת", callback_data="cat_confirm_no"),
+                ]])
+                await query.edit_message_text(
+                    f"זיהיתי קטגוריה: {suggested}\nנכון?",
+                    reply_markup=keyboard,
+                )
+            else:
+                await show_category_list(query)
         else:
-            await show_category_list(query)
-    else:
-        # הכנסה — דלג על קטגוריה ותשלום
-        await show_confirmation(query, context)
+            # הכנסה — דלג על קטגוריה ותשלום
+            await show_confirmation(query, context)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        await query.edit_message_text("❌ שגיאה פנימית. נסה שוב.")
 
 
 async def show_category_list(query):
@@ -350,19 +358,27 @@ async def handle_category_confirm(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
 
-    if query.data == "cat_confirm_yes":
-        context.user_data["category"] = context.user_data.get("suggested_category", "")
-        await show_payment_method(query, context)
-    else:
-        await show_category_list(query)
+    try:
+        if query.data == "cat_confirm_yes":
+            context.user_data["category"] = context.user_data.get("suggested_category", "")
+            await show_payment_method(query, context)
+        else:
+            await show_category_list(query)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        await query.edit_message_text("❌ שגיאה פנימית. נסה שוב.")
 
 
 async def handle_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    context.user_data["category"] = CAT_LABELS[query.data]
-    await show_payment_method(query, context)
+    try:
+        context.user_data["category"] = CAT_LABELS[query.data]
+        await show_payment_method(query, context)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        await query.edit_message_text("❌ שגיאה פנימית. נסה שוב.")
 
 
 async def show_payment_method(query, context: ContextTypes.DEFAULT_TYPE):
@@ -380,30 +396,38 @@ async def handle_payment_confirm(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
 
-    if query.data == "pay_confirm_yes":
-        context.user_data["payment_type"] = 3  # כרטיס אשראי
-        context.user_data["payment_label"] = "💳 כרטיס אשראי"
-        await show_confirmation(query, context)
-    else:
-        # הצג רשימה מלאה
-        rows = []
-        for i in range(0, len(PAYMENT_METHODS), 2):
-            row = [InlineKeyboardButton(label, callback_data=cb)
-                   for label, cb, _ in PAYMENT_METHODS[i:i+2]]
-            rows.append(row)
-        await query.edit_message_text(
-            "בחר אמצעי תשלום:",
-            reply_markup=InlineKeyboardMarkup(rows),
-        )
+    try:
+        if query.data == "pay_confirm_yes":
+            context.user_data["payment_type"] = 3  # כרטיס אשראי
+            context.user_data["payment_label"] = "💳 כרטיס אשראי"
+            await show_confirmation(query, context)
+        else:
+            # הצג רשימה מלאה
+            rows = []
+            for i in range(0, len(PAYMENT_METHODS), 2):
+                row = [InlineKeyboardButton(label, callback_data=cb)
+                       for label, cb, _ in PAYMENT_METHODS[i:i+2]]
+                rows.append(row)
+            await query.edit_message_text(
+                "בחר אמצעי תשלום:",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        await query.edit_message_text("❌ שגיאה פנימית. נסה שוב.")
 
 
 async def handle_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    context.user_data["payment_type"] = PAY_CB_TO_CODE[query.data]
-    context.user_data["payment_label"] = PAY_CB_TO_LABEL[query.data]
-    await show_confirmation(query, context)
+    try:
+        context.user_data["payment_type"] = PAY_CB_TO_CODE[query.data]
+        context.user_data["payment_label"] = PAY_CB_TO_LABEL[query.data]
+        await show_confirmation(query, context)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        await query.edit_message_text("❌ שגיאה פנימית. נסה שוב.")
 
 
 async def show_confirmation(query, context: ContextTypes.DEFAULT_TYPE):
@@ -463,9 +487,23 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         doc_id = result.get("id") or result.get("documentId") or "—"
         await query.edit_message_text(f"✅ הוזן בהצלחה!\n\nמזהה מסמך: {doc_id}")
     except requests.HTTPError as e:
-        await query.edit_message_text(f"❌ שגיאה מחשבונית ירוקה:\n{e.response.text}")
+        traceback.print_exc(file=sys.stderr)
+        try:
+            err = e.response.json()
+            msg = f"קוד שגיאה {err.get('errorCode')}: {err.get('message')}"
+        except Exception:
+            msg = e.response.text
+        await query.edit_message_text(f"❌ שגיאה מחשבונית ירוקה:\n{msg}")
     except Exception as e:
+        traceback.print_exc(file=sys.stderr)
         await query.edit_message_text(f"❌ שגיאה: {e}")
+
+
+# ── Error handler ──────────────────────────────────────────────────────────────
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    print(f"Unhandled exception: {context.error}", file=sys.stderr)
+    traceback.print_exception(type(context.error), context.error, context.error.__traceback__, file=sys.stderr)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -473,6 +511,7 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
+    app.add_error_handler(error_handler)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("debug", cmd_debug))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_file))
